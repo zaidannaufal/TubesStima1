@@ -5,6 +5,7 @@ import za.co.entelect.challenge.entities.*;
 import za.co.entelect.challenge.enums.CellType;
 import za.co.entelect.challenge.enums.Direction;
 
+import java.io.Console;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -13,11 +14,17 @@ public class Bot {
     private GameState gameState;
     private Opponent opponent;
     private MyWorm currentWorm;
+    private int banana;
+    private int snowball;
+    private int strategi;
 
-    public Bot(GameState gameState) {
+    public Bot(GameState gameState, int banana, int snowball, int strategi) {
         this.gameState = gameState;
         this.opponent = gameState.opponents[0];
         this.currentWorm = getCurrentWorm(gameState);
+        this.banana = banana;
+        this.snowball = snowball;
+        this.strategi = strategi;
     }
 
     private MyWorm getCurrentWorm(GameState gameState) {
@@ -28,52 +35,76 @@ public class Bot {
                 .get();
     }
 
+    public int BananaValue(){
+        return banana;
+    }
+    
+    public int SnowballValue(){
+        return snowball;
+    }
+
+    public int Strategi(){
+        return strategi;
+    }
     public Command run(){
         // move to middle
-
+        MyPlayer player = gameState.myPlayer;
         Worm enemyWorm = getFirstWormInRange();
         if (enemyWorm != null) {
-
             Direction direction = resolveDirection(currentWorm.position, enemyWorm.position);
+            if ((currentWorm.id == player.worms[1].id) && (CanBananaBomb(currentWorm.position, direction))){
+                banana -= 1;
+                return new BananaCommand(direction);
+            } else if ((currentWorm.id == player.worms[2].id) && (CanSnowball(currentWorm.position, direction))){
+                snowball -= 1;
+                return new SnowballCommand(direction);
+            }
             return new ShootCommand(direction);
         }
+        
+        if ((currentWorm.position.x >=15 || currentWorm.position.x <=18)  && (currentWorm.position.y >=15 || currentWorm.position.y <=18)&& strategi == 0){
+            strategi+=1;
+        } //else if((syarat sukses) && strategi sebelumnya){
+            
+    
+        return currentWorm.id == player.worms[0].id ? worm1(strategi) : currentWorm.id == player.worms[1].id  ? worm2(strategi): worm3(strategi);    
 
         // Command whattodo = StrategyMovement(15, 15, currentWorm.position);
         // make formation
         // hunt
-        MyPlayer player = gameState.myPlayer;
-        return currentWorm.id == player.worms[0].id ? worm1() : currentWorm.id == player.worms[1].id  ? worm2() : worm3();
+                
         // return whattodo;
+        // return new DoNothingCommand();
     }
 
-    private Command worm1(){
-        boolean earlygame = false;
-        if ((currentWorm.position.x != 15 || currentWorm.position.y != 15) && !(earlygame)){
-            earlygame = true;
+    private Command worm1(int strategi){
+        if (strategi == 0){
             return StrategyMovement(15, 15,currentWorm.position);
+        } else if (strategi == 1){  // strategi 1
+            return StrategyHunt();
         }
         return new DoNothingCommand();
     }
 
-    private Command worm2(){
+    private Command worm2(int strategi){
         MyPlayer player = gameState.myPlayer;
-        if (euclideanDistance(player.worms[0].position.x, player.worms[0].position.y, currentWorm.position.x, currentWorm.position.y) > 5){
+        if (strategi == 0){
             return StrategyMovement(player.worms[0].position.x, player.worms[0].position.y, currentWorm.position);
+        } else if (strategi == 1){
+            return StrategyHunt();
         }
         return new DoNothingCommand();
         // else if (){
-
         // }
     }
 
-    private Command worm3(){
+    private Command worm3(int strategi){
         MyPlayer player = gameState.myPlayer;
-        if (euclideanDistance(player.worms[0].position.x, player.worms[0].position.y, currentWorm.position.x, currentWorm.position.y) > 5){
+        if (strategi == 0){
             return StrategyMovement(player.worms[0].position.x, player.worms[0].position.y, currentWorm.position);
+        } else if (strategi == 1){
+            return StrategyHunt();
         }
-        // else if (){
-
-        // }
         return new DoNothingCommand();
     }
 
@@ -88,12 +119,13 @@ public class Bot {
                 .collect(Collectors.toSet());
 
         for (Worm enemyWorm : opponent.worms) {
-            String enemyPosition = String.format("%d_%d", enemyWorm.position.x, enemyWorm.position.y);
-            if (cells.contains(enemyPosition)) {
-                return enemyWorm;
+            if (enemyWorm.health >0){
+                String enemyPosition = String.format("%d_%d", enemyWorm.position.x, enemyWorm.position.y);
+                if (cells.contains(enemyPosition)) {
+                    return enemyWorm;
+                }
             }
         }
-
         return null;
     }
 
@@ -180,13 +212,18 @@ public class Bot {
 
         newx = mypos.x + perpindahan(x, mypos.x);
         newy = mypos.y + perpindahan(y, mypos.y);
-
+        
         for (Worm wormgw : gameState.myPlayer.worms) {
-            if(wormgw.position.x == newx && wormgw.position.y ==newy){
-                return new DoNothingCommand();
-            }
+            if(wormgw.id != currentWorm.id){
+                if(wormgw.position.x == newx && wormgw.position.y ==newy){
+                    return new DoNothingCommand();
+                }else if ((newx == wormgw.position.x || newy == wormgw.position.y) && euclideanDistance(newx, newy, wormgw.position.x, wormgw.position.y) <= 2){
+                    return new DoNothingCommand();
+                } else if ((Math.abs(newx - wormgw.position.x) == Math.abs(newy - wormgw.position.y)) && euclideanDistance(newx, newy, wormgw.position.x, wormgw.position.y) <= 2){
+                    return new DoNothingCommand();
+                }
+            }   
         }
-
         if (gameState.map[newy][newx].type== CellType.AIR){
             return new MoveCommand(newx, newy);
         } else if (gameState.map[newy][newx].type== CellType.DIRT){
@@ -195,7 +232,43 @@ public class Bot {
 
         return new DoNothingCommand();
     }
+
     private int perpindahan(int awal, int tujuan){
         return awal == tujuan ? 0 : awal > tujuan ? 1 : -1;
+    }
+
+
+// buat strategihunt
+// cari posisi worm musuh
+// bandingin ambil yang paling kecil
+// terus tinggal strategymove ke worm dengan jarak paling kecil
+    private Worm findNearestEnemy() {
+        // int a = euclideanDistance(currentWorm.position.x, currentWorm.position.y, opponent.worms[0].position.x, opponent.worms[0].position.y);
+        int a = 999;
+        Worm nearestenemy = opponent.worms[0];
+        for (Worm enemyWorm : opponent.worms) {
+            if (euclideanDistance(currentWorm.position.x, currentWorm.position.y, enemyWorm.position.x, enemyWorm.position.y) < a && enemyWorm.health > 0) {
+                a = euclideanDistance(currentWorm.position.x, currentWorm.position.y, enemyWorm.position.x, enemyWorm.position.y);
+                nearestenemy = enemyWorm;
+            }
+        }
+        return nearestenemy;
+    }
+
+
+    private Command StrategyHunt(){
+        Worm wormEnemy = findNearestEnemy();
+        return StrategyMovement(wormEnemy.position.x, wormEnemy.position.y, currentWorm.position);
+    }
+
+
+    private Boolean CanSnowball(Position mypos,Direction dir){
+        int range = euclideanDistance(mypos.x, mypos.y, dir.x, dir.y);
+        return snowball>0 && range > 2 && range <= 5;
+    }
+
+    private Boolean CanBananaBomb(Position mypos, Direction dir){
+        int range = euclideanDistance(mypos.x, mypos.y, dir.x, dir.y);
+        return banana > 0 && range > 2  && range <= 5;
     }
 }
