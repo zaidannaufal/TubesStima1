@@ -1,0 +1,389 @@
+package za.co.entelect.challenge;
+
+import za.co.entelect.challenge.command.*;
+import za.co.entelect.challenge.entities.*;
+import za.co.entelect.challenge.enums.CellType;
+import za.co.entelect.challenge.enums.Direction;
+import za.co.entelect.challenge.enums.Profession;
+
+import javax.activation.CommandMap;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class Bot {
+
+    private Random random;
+    private GameState gameState;
+    private Opponent opponent;
+    private MyWorm currentWorm;
+
+    public Bot(Random random, GameState gameState) {
+        this.random = random;
+        this.gameState = gameState;
+        this.opponent = gameState.opponents[0];
+        this.currentWorm = getCurrentWorm(gameState);
+    }
+
+    private MyWorm getCurrentWorm(GameState gameState) {
+        return Arrays.stream(gameState.myPlayer.worms)
+                .filter(myWorm -> myWorm.id == gameState.currentWormId)
+                .findFirst()
+                .get();
+    }
+
+    public Command run() {
+        Worm target = chooseTarget();
+        System.out.format("target worm: %d\n", target.id);
+
+        //STAGE 1
+//        if (gameState.currentRound < 30) {
+//            return moveToCenter();
+//        }
+
+        //STAGE 2
+        if (isNearLava()) {
+            return moveToCenter();
+        }
+
+        //STAGE 3
+        if (currentWorm.health > currentWorm.weapon.damage) {
+            return hunt(target);
+        }
+
+        //STAGE 4
+        return retreatFrom(target);
+
+    }
+
+
+    private List<List<Cell>> constructFireDirectionLines(int range) {
+        List<List<Cell>> directionLines = new ArrayList<>();
+        for (Direction direction : Direction.values()) {
+            List<Cell> directionLine = new ArrayList<>();
+            for (int directionMultiplier = 1; directionMultiplier <= range; directionMultiplier++) {
+
+                int coordinateX = currentWorm.position.x + (directionMultiplier * direction.x);
+                int coordinateY = currentWorm.position.y + (directionMultiplier * direction.y);
+
+                if (!isValidCoordinate(coordinateX, coordinateY)) {
+                    break;
+                }
+
+                if (euclideanDistance(currentWorm.position.x, currentWorm.position.y, coordinateX, coordinateY) > range) {
+                    break;
+                }
+
+                Cell cell = gameState.map[coordinateY][coordinateX];
+                if (cell.type != CellType.AIR) {
+                    break;
+                }
+
+                directionLine.add(cell);
+            }
+            directionLines.add(directionLine);
+        }
+
+        return directionLines;
+    }
+
+    private List<Cell> getSurroundingCells(int x, int y) {
+        ArrayList<Cell> cells = new ArrayList<>();
+        for (int i = x - 1; i <= x + 1; i++) {
+            for (int j = y - 1; j <= y + 1; j++) {
+                // Don't include the current position
+                if ((i != x || j != y) && isValidCoordinate(i, j)) {
+                    cells.add(gameState.map[j][i]);
+                }
+            }
+        }
+
+        return cells;
+    }
+
+    private int euclideanDistance(int aX, int aY, int bX, int bY) {
+        return (int) (Math.sqrt(Math.pow(aX - bX, 2) + Math.pow(aY - bY, 2)));
+    }
+
+    private boolean isValidCoordinate(int x, int y) {
+        return x >= 0 && x < gameState.mapSize
+                && y >= 0 && y < gameState.mapSize;
+    }
+
+    private Direction resolveDirection(Position a, Position b) {
+        StringBuilder builder = new StringBuilder();
+
+        int verticalComponent = b.y - a.y;
+        int horizontalComponent = b.x - a.x;
+
+        if (verticalComponent < 0) {
+            builder.append('N');
+        } else if (verticalComponent > 0) {
+            builder.append('S');
+        }
+
+        if (horizontalComponent < 0) {
+            builder.append('W');
+        } else if (horizontalComponent > 0) {
+            builder.append('E');
+        }
+
+        return Direction.valueOf(builder.toString());
+    }
+
+    //------------------- ADDED FUNCTIONALITIES --------------------------
+    private Worm chooseTarget() {
+        /*Chooses the worm to be targeted, starting from the worm with the lowest id*/
+        int lowestId = 99;
+        Worm chosenWorm = null;
+
+        for (Worm opponentWorm : opponent.worms) {
+            if (opponentWorm.id < lowestId && opponentWorm.health > 0) {
+                lowestId = opponentWorm.id;
+                chosenWorm = opponentWorm;
+            }
+        }
+        return chosenWorm;
+    }
+
+    private Worm chooseWeakestTarget() {
+        int lowestHealth = 999;
+        Worm chosenWorm = null;
+
+        for (Worm opponentWorm : opponent.worms) {
+            if (opponentWorm.health < lowestHealth && opponentWorm.health > 0) {
+                lowestHealth = opponentWorm.health;
+                chosenWorm = opponentWorm;
+            }
+        }
+
+        return chosenWorm;
+    }
+
+    private boolean shouldShootAttack(Worm target, double min_probability) {
+        List<List<Cell>> directionLines = constructFireDirectionLines(currentWorm.weapon.range);
+        boolean targetFound = false;
+
+        for (List<Cell> directionLine : directionLines) {
+            for (Cell cell : directionLine) {
+                if (cell.x == target.position.x && cell.y == target.position.y
+                        && random.nextDouble() > min_probability) {
+                    targetFound = true;
+                    break;
+                }
+            }
+        }
+        return targetFound;
+    }
+
+    private boolean shouldBananaAttack(Worm target, double min_probability) {
+        /*Returns whether or nto a worm should throw a banana bomb at a certain target
+        * min_probability = 0.0 for main target and 0.6 for other targets*/
+        if (currentWorm.profession != Profession.Agent) {
+            return false;
+        }
+        int targetDistance = euclideanDistance(currentWorm.position.x, currentWorm.position.y,
+                target.position.x, target.position.y);
+
+        return (currentWorm.bananaBombs.count > 0
+                && targetDistance <= currentWorm.bananaBombs.range
+                && targetDistance > currentWorm.bananaBombs.damageRadius * 0.75
+                && random.nextDouble() > min_probability);
+    }
+
+    private boolean shouldSnowballAttack(Worm target, double min_probability) {
+        /*Returns whether or nto a worm should throw a snowball at a certain target
+         * min_probability = 0.0 for main target and 0.6 for other targets*/
+        if (currentWorm.profession != Profession.Technologist) {
+            return false;
+        }
+        int targetDistance = euclideanDistance(currentWorm.position.x, currentWorm.position.y,
+                target.position.x, target.position.y);
+
+        return (currentWorm.snowballs.count > 0
+                && targetDistance <= currentWorm.snowballs.range
+                && targetDistance > currentWorm.snowballs.freezeRadius * Math.sqrt(2)
+                && random.nextDouble() > min_probability);
+    }
+
+    private boolean isNearLava() {
+        boolean lavaFound = false;
+
+        for (int i = currentWorm.position.x - 2; i <= currentWorm.position.x + 2; i++) {
+            for (int j = currentWorm.position.y - 2; j <= currentWorm.position.y + 2; j++) {
+                // Don't include the current position
+                if ((i != currentWorm.position.x || j != currentWorm.position.y) && isValidCoordinate(i, j)) {
+                    if (gameState.map[j][i].type == CellType.LAVA) {
+                        if (random.nextBoolean()) {
+                            lavaFound = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return lavaFound;
+    }
+
+    private Command attack(Worm target, double miss_chance) {
+        //Check banana attack
+        if (shouldBananaAttack(target, miss_chance)) {
+            return new BananaCommand(target.position.x, target.position.y);
+        }
+
+        //Check banana attack
+        if (shouldSnowballAttack(target, miss_chance)) {
+            return new SnowballCommand(target.position.x, target.position.y);
+        }
+
+        //Check shoot attack
+        if (shouldShootAttack(target, miss_chance)) {
+            Direction direction = resolveDirection(currentWorm.position, target.position);
+            return new ShootCommand(direction);
+        }
+        return null;
+    }
+
+
+    //--------------------------------STRATEGIES-------------------------------------
+    private Command moveOrDigTowards(Worm target) {
+
+        List<Cell> adjacentCells = getSurroundingCells(currentWorm.position.x, currentWorm.position.y);
+
+        Cell chosenCell = adjacentCells.get(0);
+        int distFromTarget = euclideanDistance(chosenCell.x, chosenCell.y, target.position.x, target.position.y);
+
+        for (Cell cell : adjacentCells) {
+            int cDistance = euclideanDistance(cell.x, cell.y, target.position.x, target.position.y);
+            if (cDistance < distFromTarget && cell.occupier == null && cell.type != CellType.LAVA) {
+                chosenCell = cell;
+                distFromTarget = cDistance;
+            }
+        }
+
+        //Return the command
+        if (chosenCell.type == CellType.AIR) {
+            return new MoveCommand(chosenCell.x, chosenCell.y);
+        }
+        return new DigCommand(chosenCell.x, chosenCell.y);
+    }
+
+
+    private Command attackMain(Worm target) {
+        return attack(target, 0.0);
+    }
+
+    private Command attackOtherThan(Worm target) {
+
+        for (Worm opponentWorm : opponent.worms) {
+            if (opponentWorm.id != target.id) {
+                Command command = attack(target, 0.0);
+                if (command != null) {
+                    return command;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    //---------------------------MAIN STRATEGIES-----------------------------
+
+    private Command hunt(Worm target) {
+        Command attackOther = attackOtherThan(target);
+        Command attackMain = attackMain(target);
+        Command getCloserTo = moveOrDigTowards(target);
+
+        if (attackOther != null) {
+            return attackOther;
+        }
+
+        if (attackMain != null) {
+            return attackMain;
+        }
+
+        return getCloserTo;
+
+    }
+
+    private Command retreatFrom(Worm target) {
+        List<Cell> adjacentCells = getSurroundingCells(currentWorm.position.x, currentWorm.position.y);
+
+        Cell chosenCell = adjacentCells.get(0);
+        int distFromTarget = euclideanDistance(chosenCell.x, chosenCell.y, target.position.x, target.position.y);
+
+        for (Cell cell : adjacentCells) {
+            int cDistance = euclideanDistance(cell.x, cell.y, target.position.x, target.position.y);
+            if ( cell.occupier == null && cell.type == CellType.AIR) {
+                chosenCell = cell;
+                distFromTarget = cDistance;
+            }
+        }
+
+        //Return the command
+        if (chosenCell.type != CellType.AIR) {
+            return new DoNothingCommand();
+        }
+
+        return new MoveCommand(chosenCell.x, chosenCell.y);
+
+    }
+
+    private Command moveToCenter() {
+        System.out.println("In here");
+        /*Main goal is to reach the center, can deviate from path if there is an enemy in pathway or
+         * there is health pack nearby*/
+        Cell currentCell, chosenCell;
+        double digScore = 0, moveScore = 0;
+        int digIdx = 0, moveIdx = 0;
+
+        double fromCenterScore;
+
+        List<Cell> adjacentCells = getSurroundingCells(currentWorm.position.x, currentWorm.position.y);
+
+        for (int i=0; i<adjacentCells.size(); i++) {
+            double cDigScore = 0, cMoveScore = 0;
+            currentCell = adjacentCells.get(i);
+
+            //Adding the fromCenterScore to both digScore and moveScore
+            fromCenterScore = (double) 1 / (euclideanDistance(currentCell.x, currentCell.y,
+                    gameState.mapSize / 2, gameState.mapSize / 2));
+            cDigScore += fromCenterScore;
+            cMoveScore += fromCenterScore;
+
+            if (currentCell.type == CellType.AIR) {
+                cMoveScore += 5;
+                if (currentCell.powerUp != null) {
+                    cMoveScore += 10;
+                    System.out.println("powerup found");
+                    return new MoveCommand(currentCell.x, currentCell.y);
+                }
+                if (currentCell.occupier != null) {
+                    cMoveScore -= 10;
+                }
+            } else if (currentCell.type == CellType.DIRT) {
+                cDigScore += 5;
+            }
+
+            //Update moveScore
+            if (cMoveScore > moveScore) {
+                moveScore = cMoveScore;
+                moveIdx = i;
+            }
+            //update digScore
+            if (cDigScore > digScore) {
+                digScore = cDigScore;
+                digIdx = i;
+            }
+        }
+
+        if (digScore > moveScore) {
+            chosenCell = adjacentCells.get(digIdx);
+            return new DigCommand(chosenCell.x, chosenCell.y);
+        } else {
+            chosenCell = adjacentCells.get(moveIdx);
+            return new MoveCommand(chosenCell.x, chosenCell.y);
+        }
+
+    }
+
+}

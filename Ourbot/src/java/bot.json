@@ -1,0 +1,8 @@
+{
+	"author": "Farras Hiban",
+	"email": "James.James@example.com",
+	"nickName": "Yonas Adiel",
+	"botLocation": "/target",
+	"botFileName": "java-sample-bot-jar-with-dependencies.jar",
+	"botLanguage": "java"
+}
